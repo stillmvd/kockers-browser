@@ -16,7 +16,7 @@ use windows_sys::Win32::{
         POINT, RECT, WPARAM,
     },
     Graphics::{Dwm::DwmSetWindowAttribute, Gdi::*},
-    System::LibraryLoader::GetModuleHandleW,
+    System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW},
     UI::{
         Controls::{
             Dialogs::{
@@ -1888,6 +1888,7 @@ unsafe fn show_main_menu(window: HWND) {
             MENU_CLEAR_SITE,
             wide("Очистить cookies, кэш и авторизацию").as_ptr(),
         );
+        use_light_menus();
         let point = cursor_position();
         let command = TrackPopupMenu(
             menu,
@@ -1949,6 +1950,7 @@ unsafe fn show_tab_menu(window: HWND, id: u64) {
             MENU_CLOSE_TAB,
             wide("Закрыть вкладку").as_ptr(),
         );
+        use_light_menus();
         let point = cursor_position();
         let command = TrackPopupMenu(
             menu,
@@ -1964,6 +1966,26 @@ unsafe fn show_tab_menu(window: HWND, id: u64) {
             BrowserController::toggle_pin(&controller, id);
         } else if command == MENU_CLOSE_TAB as i32 {
             BrowserController::close_tab(&controller, id);
+        }
+    }
+}
+
+unsafe fn use_light_menus() {
+    const SET_PREFERRED_APP_MODE: usize = 135;
+    const FLUSH_MENU_THEMES: usize = 136;
+    const FORCE_LIGHT: i32 = 3;
+    unsafe {
+        let uxtheme = LoadLibraryW(wide("uxtheme.dll").as_ptr());
+        if uxtheme.is_null() {
+            return;
+        }
+        if let Some(set_mode) = GetProcAddress(uxtheme, SET_PREFERRED_APP_MODE as *const u8) {
+            let set_mode: unsafe extern "system" fn(i32) -> i32 = mem::transmute(set_mode);
+            set_mode(FORCE_LIGHT);
+        }
+        if let Some(flush) = GetProcAddress(uxtheme, FLUSH_MENU_THEMES as *const u8) {
+            let flush: unsafe extern "system" fn() = mem::transmute(flush);
+            flush();
         }
     }
 }
