@@ -41,6 +41,7 @@ const BACKGROUND: COLORREF = rgb(0xF1, 0xF2, 0xEC);
 const SURFACE: COLORREF = rgb(0xFC, 0xFC, 0xFA);
 const FOREGROUND: COLORREF = rgb(0x20, 0x22, 0x1D);
 const SECONDARY: COLORREF = rgb(0x7C, 0x80, 0x73);
+const DISABLED: COLORREF = rgb(0xB8, 0xBB, 0xB0);
 const DIVIDER: COLORREF = rgb(0xDE, 0xE0, 0xD7);
 const HOVER: COLORREF = rgb(0xE7, 0xE9, 0xE0);
 const ACCENT: COLORREF = rgb(0x72, 0x7C, 0x45);
@@ -1585,7 +1586,7 @@ unsafe fn draw_tab(ui: &NativeUi, dc: HDC, visual: &TabVisual) {
 
 unsafe fn draw_button(dc: HDC, ui: &NativeUi, hit: Hit, rect: RECT, text: &str, enabled: bool) {
     unsafe {
-        if ui.hover == hit || ui.pressed == hit {
+        if enabled && (ui.hover == hit || ui.pressed == hit) {
             fill_round_rect(dc, &rect, HOVER, 11, None);
         }
         draw_text(
@@ -1593,7 +1594,7 @@ unsafe fn draw_button(dc: HDC, ui: &NativeUi, hit: Hit, rect: RECT, text: &str, 
             text,
             &rect,
             ui.icon_font,
-            if enabled { FOREGROUND } else { SECONDARY },
+            if enabled { FOREGROUND } else { DISABLED },
             DT_CENTER,
         );
     }
