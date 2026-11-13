@@ -47,6 +47,8 @@ const ACCENT: COLORREF = rgb(0x72, 0x7C, 0x45);
 const WARNING: COLORREF = rgb(0xB2, 0x6A, 0x28);
 const CLOSE_HOVER: COLORREF = rgb(0xC5, 0x42, 0x3B);
 const ID_ADDRESS: usize = 103;
+const ADDRESS_PADDING_LEFT: i32 = 34;
+const ADDRESS_PADDING_RIGHT: i32 = 18;
 const ID_DOWNLOAD_OVERLAY: usize = 110;
 const ICON_ID: usize = 1;
 const ANIMATION_TIMER: usize = 1;
@@ -229,7 +231,7 @@ impl NativeUi {
                 self.address,
                 EM_SETMARGINS,
                 (EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize,
-                (34 | (18 << 16)) as isize,
+                0,
             );
             subclass_control(self.address);
             self.logo_icon = LoadImageW(
@@ -305,11 +307,16 @@ impl NativeUi {
         let (width, height) = unsafe { client_size(self.window) };
         self.layout_tabs();
         unsafe {
-            MoveWindow(self.address, 184, 57, (width - 336).max(100), 40, 1);
-            let region = CreateRoundRectRgn(0, 0, (width - 336).max(100) + 1, 41, 40, 40);
-            if !region.is_null() {
-                SetWindowRgn(self.address, region, 1);
-            }
+            let field = address_field(width);
+            let edit_height = 22;
+            MoveWindow(
+                self.address,
+                field.left + ADDRESS_PADDING_LEFT,
+                field.top + (field.bottom - field.top - edit_height) / 2,
+                field.right - field.left - ADDRESS_PADDING_LEFT - ADDRESS_PADDING_RIGHT,
+                edit_height,
+                1,
+            );
             self.layout_downloads();
             lock_controller(&self.controller).resize_content();
             if !self.rounded_by_dwm {
@@ -1009,6 +1016,14 @@ unsafe extern "system" fn window_proc(
                 let y = high_word(lparam) as i32;
                 if let Some(ui) = ui_mut(window) {
                     let hit = ui.hit_test(x, y);
+                    let field = address_field(client_size(window).0);
+                    if hit == Hit::None
+                        && PtInRect(&field, POINT { x, y }) != 0
+                        && GetFocus() != ui.address
+                    {
+                        focus_address(window);
+                        return 0;
+                    }
                     ui.pressed = hit;
                     if let Hit::Tab(id) = hit {
                         ui.drag_tab = Some(id);
@@ -1225,7 +1240,7 @@ unsafe fn draw_address_overlay(address: HWND) {
         let parent = GetParent(address);
         let Some(ui) = ui_mut(parent) else { return };
         let text = window_text(address);
-        if !text.is_empty() && !ui.current_url.starts_with("http://") {
+        if !text.is_empty() {
             return;
         }
         let dc = GetDC(address);
@@ -1236,36 +1251,15 @@ unsafe fn draw_address_overlay(address: HWND) {
         GetClientRect(address, &mut rect);
         SetBkMode(dc, TRANSPARENT as i32);
         SelectObject(dc, ui.font as HGDIOBJ);
-        if ui.current_url.starts_with("http://") {
-            SetTextColor(dc, WARNING);
-            let mut warning = wide("!");
-            let mut warning_rect = RECT {
-                left: 14,
-                top: 0,
-                right: 28,
-                bottom: rect.bottom,
-            };
-            DrawTextW(
-                dc,
-                warning.as_mut_ptr(),
-                1,
-                &mut warning_rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-            );
-        }
-        if text.is_empty() {
-            SetTextColor(dc, SECONDARY);
-            let mut placeholder = wide("Адрес или поиск");
-            rect.left = 34;
-            rect.right -= 18;
-            DrawTextW(
-                dc,
-                placeholder.as_mut_ptr(),
-                placeholder.len() as i32 - 1,
-                &mut rect,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
-            );
-        }
+        SetTextColor(dc, SECONDARY);
+        let mut placeholder = wide("Адрес или поиск");
+        DrawTextW(
+            dc,
+            placeholder.as_mut_ptr(),
+            placeholder.len() as i32 - 1,
+            &mut rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+        );
         ReleaseDC(address, dc);
     }
 }
@@ -1381,6 +1375,23 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
             ptr::null_mut(),
             DI_NORMAL,
         );
+        let field = address_field(width);
+        fill_round_rect(
+            memory,
+            &field,
+            SURFACE,
+            (field.bottom - field.top) / 2,
+            None,
+        );
+        if ui.current_url.starts_with("http://") {
+            let warning = RECT {
+                left: field.left + 14,
+                top: field.top,
+                right: field.left + 28,
+                bottom: field.bottom,
+            };
+            draw_text(memory, "!", &warning, ui.font, WARNING, DT_CENTER);
+        }
         for visual in &ui.tabs {
             draw_tab(ui, memory, visual);
         }
@@ -1519,6 +1530,15 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
         SelectObject(memory, old_bitmap);
         DeleteObject(bitmap as HGDIOBJ);
         DeleteDC(memory);
+    }
+}
+
+fn address_field(width: i32) -> RECT {
+    RECT {
+        left: 184,
+        top: 57,
+        right: 184 + (width - 336).max(100),
+        bottom: 97,
     }
 }
 
