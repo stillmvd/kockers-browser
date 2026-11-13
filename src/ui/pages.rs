@@ -60,7 +60,7 @@ fn start_page_html() -> String {
 body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px;
   overflow: hidden; background: radial-gradient(circle at 50% 35%, #fff 0, #f7f7f4 58%, #efefe9 100%);
   color: #171815; font-family: "Segoe UI", Arial, sans-serif; }}
-main {{ width: min(560px, 100%); text-align: center; transform: translateY(-4vh); }}
+main {{ position: relative; top: -4vh; width: min(560px, 100%); text-align: center; }}
 .brand {{ will-change: transform, opacity; }}
 .logo {{ width: 104px; height: 104px; margin: 0 auto 22px; filter: drop-shadow(0 12px 24px #25281a18); }}
 .logo svg {{ display: block; width: 100%; height: 100%; }}
