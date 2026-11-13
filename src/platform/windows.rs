@@ -16,7 +16,7 @@ use windows_sys::Win32::{
         POINT, RECT, WPARAM,
     },
     Graphics::{Dwm::DwmSetWindowAttribute, Gdi::*},
-    System::LibraryLoader::GetModuleHandleW,
+    System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::{
         Controls::{
             Dialogs::{
@@ -63,6 +63,9 @@ const MENU_CLEAR_SITE: usize = 2008;
 const MENU_PIN: usize = 2101;
 const MENU_CLOSE_TAB: usize = 2102;
 static OPEN_WINDOWS: AtomicUsize = AtomicUsize::new(0);
+static DOWNLOADS_HOOK: AtomicUsize = AtomicUsize::new(0);
+static DOWNLOADS_OWNER: AtomicUsize = AtomicUsize::new(0);
+const WM_CLOSE_DOWNLOADS: u32 = WM_APP + 1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Hit {
@@ -330,18 +333,30 @@ impl NativeUi {
             return;
         }
         let (width, height) = unsafe { client_size(self.window) };
-        let panel_width = 400.min(width - 24);
-        let panel_height =
-            (54 + self.downloads.len().max(1) as i32 * 74).min(height - TOOLBAR_HEIGHT - 24);
+        let panel_width = 400.min(width - 28);
+        let content_height = if self.downloads.is_empty() {
+            96
+        } else {
+            54 + self.downloads.len() as i32 * 74
+        };
+        let panel_height = content_height.min(height - TOOLBAR_HEIGHT - 32).max(90);
         unsafe {
+            let mut current = RECT::default();
+            GetClientRect(self.downloads_window, &mut current);
             MoveWindow(
                 self.downloads_window,
-                width - panel_width - 12,
-                TOOLBAR_HEIGHT + self.panel_offset.value.round() as i32,
+                width - panel_width - 14,
+                TOOLBAR_HEIGHT + 8 + self.panel_offset.value.round() as i32,
                 panel_width,
-                panel_height.max(90),
+                panel_height,
                 1,
             );
+            if current.right != panel_width || current.bottom != panel_height {
+                let region = CreateRoundRectRgn(0, 0, panel_width + 1, panel_height + 1, 32, 32);
+                if !region.is_null() {
+                    SetWindowRgn(self.downloads_window, region, 1);
+                }
+            }
         }
     }
 
@@ -416,10 +431,20 @@ impl NativeUi {
                 );
             }
             self.update_animation_timer();
+            unsafe { watch_outside_clicks(self.window) };
         } else {
-            unsafe { ShowWindow(self.downloads_window, SW_HIDE) };
+            unsafe {
+                ShowWindow(self.downloads_window, SW_HIDE);
+                stop_watching_outside_clicks(self.window);
+            }
         }
         unsafe { InvalidateRect(self.window, ptr::null(), 0) };
+    }
+
+    fn hide_downloads(&mut self) {
+        if self.show_downloads {
+            self.toggle_downloads();
+        }
     }
 
     fn update_animation_timer(&mut self) {
@@ -457,6 +482,7 @@ impl NativeUi {
     fn submit_address(&mut self) {
         let input = window_text(self.address);
         self.address_editing = false;
+        self.hide_downloads();
         BrowserController::navigate_input(&self.controller, &input);
     }
 
@@ -959,6 +985,17 @@ unsafe extern "system" fn window_proc(
                 info.ptMinTrackSize.y = MIN_HEIGHT;
                 return 0;
             }
+            WM_CLOSE_DOWNLOADS => {
+                if let Some(ui) = ui_mut(window) {
+                    ui.hide_downloads();
+                }
+                return 0;
+            }
+            WM_ACTIVATE if (wparam & 0xFFFF) as u32 == WA_INACTIVE => {
+                if let Some(ui) = ui_mut(window) {
+                    ui.hide_downloads();
+                }
+            }
             WM_TIMER if wparam == ANIMATION_TIMER => {
                 if let Some(ui) = ui_mut(window) {
                     ui.animate();
@@ -1099,6 +1136,7 @@ unsafe extern "system" fn window_proc(
                 return 0;
             }
             WM_NCDESTROY => {
+                stop_watching_outside_clicks(window);
                 let ui_pointer = ui_ptr(window);
                 SetWindowLongPtrW(window, GWLP_USERDATA, 0);
                 if !ui_pointer.is_null() {
@@ -1658,9 +1696,9 @@ unsafe fn draw_download_panel(ui: &NativeUi, dc: HDC) {
         if ui.downloads.is_empty() {
             let empty = RECT {
                 left: 20,
-                top: 55,
+                top: 50,
                 right: client.right - 20,
-                bottom: 94,
+                bottom: 86,
             };
             draw_text(
                 dc,
@@ -1965,6 +2003,78 @@ unsafe fn show_tab_menu(window: HWND, id: u64) {
         } else if command == MENU_CLOSE_TAB as i32 {
             BrowserController::close_tab(&controller, id);
         }
+    }
+}
+
+unsafe fn watch_outside_clicks(owner: HWND) {
+    unsafe {
+        let previous = DOWNLOADS_OWNER.swap(owner as usize, Ordering::SeqCst);
+        if previous != 0 && previous != owner as usize {
+            PostMessageW(previous as HWND, WM_CLOSE_DOWNLOADS, 0, 0);
+        }
+        if DOWNLOADS_HOOK.load(Ordering::SeqCst) == 0 {
+            let hook = SetWindowsHookExW(
+                WH_MOUSE,
+                Some(outside_click_hook),
+                ptr::null_mut(),
+                GetCurrentThreadId(),
+            );
+            DOWNLOADS_HOOK.store(hook as usize, Ordering::SeqCst);
+        }
+    }
+}
+
+unsafe fn stop_watching_outside_clicks(owner: HWND) {
+    unsafe {
+        if DOWNLOADS_OWNER
+            .compare_exchange(owner as usize, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            let hook = DOWNLOADS_HOOK.swap(0, Ordering::SeqCst);
+            if hook != 0 {
+                UnhookWindowsHookEx(hook as HHOOK);
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn outside_click_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe {
+        if code >= 0
+            && matches!(
+                wparam as u32,
+                WM_LBUTTONDOWN
+                    | WM_RBUTTONDOWN
+                    | WM_MBUTTONDOWN
+                    | WM_NCLBUTTONDOWN
+                    | WM_NCRBUTTONDOWN
+                    | WM_NCMBUTTONDOWN
+            )
+        {
+            let owner = DOWNLOADS_OWNER.load(Ordering::SeqCst) as HWND;
+            let info = &*(lparam as *const MOUSEHOOKSTRUCT);
+            if !owner.is_null()
+                && let Some(ui) = ui_mut(owner)
+                && clicked_outside_downloads(ui, info)
+            {
+                PostMessageW(owner, WM_CLOSE_DOWNLOADS, 0, 0);
+            }
+        }
+        CallNextHookEx(ptr::null_mut(), code, wparam, lparam)
+    }
+}
+
+unsafe fn clicked_outside_downloads(ui: &NativeUi, info: &MOUSEHOOKSTRUCT) -> bool {
+    unsafe {
+        if info.hwnd == ui.downloads_window || IsChild(ui.downloads_window, info.hwnd) != 0 {
+            return false;
+        }
+        if info.hwnd == ui.window {
+            let mut point = info.pt;
+            ScreenToClient(ui.window, &mut point);
+            return ui.hit_test(point.x, point.y) != Hit::Downloads;
+        }
+        true
     }
 }
 
