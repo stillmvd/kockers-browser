@@ -52,6 +52,20 @@ const ICON_ID: usize = 1;
 const ANIMATION_TIMER: usize = 1;
 const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
 const DWMWCP_ROUND: u32 = 2;
+const GLYPH_ADD: &str = "\u{E710}";
+const GLYPH_BACK: &str = "\u{E72B}";
+const GLYPH_FORWARD: &str = "\u{E72A}";
+const GLYPH_REFRESH: &str = "\u{E72C}";
+const GLYPH_CANCEL: &str = "\u{E711}";
+const GLYPH_HOME: &str = "\u{E80F}";
+const GLYPH_DOWNLOAD: &str = "\u{E896}";
+const GLYPH_MORE: &str = "\u{E712}";
+const GLYPH_MINIMIZE: &str = "\u{E921}";
+const GLYPH_MAXIMIZE: &str = "\u{E922}";
+const GLYPH_RESTORE: &str = "\u{E923}";
+const GLYPH_CLOSE: &str = "\u{E8BB}";
+const GLYPH_PLAY: &str = "\u{E768}";
+const GLYPH_PAUSE: &str = "\u{E769}";
 const MENU_PRIVATE: usize = 2001;
 const MENU_HISTORY: usize = 2002;
 const MENU_DOWNLOAD_PROMPT: usize = 2003;
@@ -127,6 +141,7 @@ struct NativeUi {
     font: HFONT,
     small_font: HFONT,
     icon_font: HFONT,
+    caption_font: HFONT,
     title_font: HFONT,
     logo_icon: HICON,
     current_url: String,
@@ -160,6 +175,7 @@ impl NativeUi {
             font: ptr::null_mut(),
             small_font: ptr::null_mut(),
             icon_font: ptr::null_mut(),
+            caption_font: ptr::null_mut(),
             title_font: ptr::null_mut(),
             logo_icon: ptr::null_mut(),
             current_url: String::new(),
@@ -188,13 +204,15 @@ impl NativeUi {
             self.surface_brush = CreateSolidBrush(SURFACE);
             self.font = create_font(16, "Segoe UI");
             self.small_font = create_font(12, "Segoe UI");
-            self.icon_font = create_font(18, "Segoe UI Symbol");
+            self.icon_font = create_icon_font(16);
+            self.caption_font = create_icon_font(10);
             self.title_font = create_font(13, "Segoe UI");
             if self.background_brush.is_null()
                 || self.surface_brush.is_null()
                 || self.font.is_null()
                 || self.small_font.is_null()
                 || self.icon_font.is_null()
+                || self.caption_font.is_null()
                 || self.title_font.is_null()
             {
                 return Err("Не удалось создать графические ресурсы панели.".to_owned());
@@ -558,6 +576,7 @@ impl NativeUi {
                 self.font as HGDIOBJ,
                 self.small_font as HGDIOBJ,
                 self.icon_font as HGDIOBJ,
+                self.caption_font as HGDIOBJ,
                 self.title_font as HGDIOBJ,
             ] {
                 if !object.is_null() {
@@ -1394,7 +1413,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: width - 142,
                 bottom: 37,
             },
-            "+",
+            GLYPH_ADD,
             true,
         );
         draw_button(
@@ -1407,7 +1426,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: 48,
                 bottom: 95,
             },
-            "←",
+            GLYPH_BACK,
             ui.can_go_back,
         );
         draw_button(
@@ -1420,7 +1439,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: 90,
                 bottom: 95,
             },
-            "→",
+            GLYPH_FORWARD,
             ui.can_go_forward,
         );
         draw_button(
@@ -1433,7 +1452,11 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: 132,
                 bottom: 95,
             },
-            if ui.is_loading { "×" } else { "↻" },
+            if ui.is_loading {
+                GLYPH_CANCEL
+            } else {
+                GLYPH_REFRESH
+            },
             true,
         );
         draw_button(
@@ -1446,7 +1469,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: 174,
                 bottom: 95,
             },
-            "⌂",
+            GLYPH_HOME,
             true,
         );
         draw_button(
@@ -1459,7 +1482,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: width - 58,
                 bottom: 95,
             },
-            "↓",
+            GLYPH_DOWNLOAD,
             true,
         );
         draw_button(
@@ -1472,7 +1495,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: width - 14,
                 bottom: 95,
             },
-            "⋮",
+            GLYPH_MORE,
             true,
         );
         draw_button(
@@ -1485,7 +1508,7 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 right: width - 92,
                 bottom: TAB_HEIGHT,
             },
-            "—",
+            GLYPH_MINIMIZE,
             true,
         );
         draw_button(
@@ -1499,9 +1522,9 @@ unsafe fn paint_toolbar(ui: &mut NativeUi, dc: HDC) {
                 bottom: TAB_HEIGHT,
             },
             if IsZoomed(ui.window) != 0 {
-                "❐"
+                GLYPH_RESTORE
             } else {
-                "□"
+                GLYPH_MAXIMIZE
             },
             true,
         );
@@ -1579,7 +1602,14 @@ unsafe fn draw_tab(ui: &NativeUi, dc: HDC, visual: &TabVisual) {
         if ui.hover == Hit::TabClose(visual.tab.id) {
             fill_round_rect(dc, &close, HOVER, 8, None);
         }
-        draw_text(dc, "×", &close, ui.icon_font, SECONDARY, DT_CENTER);
+        draw_text(
+            dc,
+            GLYPH_CLOSE,
+            &close,
+            ui.caption_font,
+            SECONDARY,
+            DT_CENTER,
+        );
     }
 }
 
@@ -1588,11 +1618,16 @@ unsafe fn draw_button(dc: HDC, ui: &NativeUi, hit: Hit, rect: RECT, text: &str, 
         if ui.hover == hit || ui.pressed == hit {
             fill_round_rect(dc, &rect, HOVER, 11, None);
         }
+        let font = if matches!(hit, Hit::Minimize | Hit::Maximize) {
+            ui.caption_font
+        } else {
+            ui.icon_font
+        };
         draw_text(
             dc,
             text,
             &rect,
-            ui.icon_font,
+            font,
             if enabled { FOREGROUND } else { SECONDARY },
             DT_CENTER,
         );
@@ -1614,9 +1649,9 @@ unsafe fn draw_caption_close(ui: &NativeUi, dc: HDC, width: i32) {
         }
         draw_text(
             dc,
-            "×",
+            GLYPH_CLOSE,
             &rect,
-            ui.icon_font,
+            ui.caption_font,
             if ui.hover == Hit::CloseWindow {
                 SURFACE
             } else {
@@ -1654,7 +1689,14 @@ unsafe fn draw_download_panel(ui: &NativeUi, dc: HDC) {
             right: client.right - 10,
             bottom: 44,
         };
-        draw_text(dc, "×", &close, ui.icon_font, SECONDARY, DT_CENTER);
+        draw_text(
+            dc,
+            GLYPH_CLOSE,
+            &close,
+            ui.caption_font,
+            SECONDARY,
+            DT_CENTER,
+        );
         if ui.downloads.is_empty() {
             let empty = RECT {
                 left: 20,
@@ -1722,9 +1764,9 @@ unsafe fn draw_download_panel(ui: &NativeUi, dc: HDC) {
                 DownloadStatus::InProgress | DownloadStatus::Paused => draw_text(
                     dc,
                     if download.status == DownloadStatus::Paused {
-                        "▶"
+                        GLYPH_PLAY
                     } else {
-                        "Ⅱ"
+                        GLYPH_PAUSE
                     },
                     &action,
                     ui.icon_font,
@@ -1743,7 +1785,14 @@ unsafe fn draw_download_panel(ui: &NativeUi, dc: HDC) {
                     right: client.right - 14,
                     bottom: top + 52,
                 };
-                draw_text(dc, "×", &cancel, ui.icon_font, SECONDARY, DT_CENTER);
+                draw_text(
+                    dc,
+                    GLYPH_CLOSE,
+                    &cancel,
+                    ui.caption_font,
+                    SECONDARY,
+                    DT_CENTER,
+                );
             }
             if matches!(
                 download.status,
@@ -1807,7 +1856,7 @@ unsafe fn draw_text(dc: HDC, text: &str, rect: &RECT, font: HFONT, color: COLORR
             text.as_mut_ptr(),
             text.len() as i32 - 1,
             &mut rect,
-            flags | DT_SINGLELINE,
+            flags | DT_SINGLELINE | DT_VCENTER,
         );
     }
 }
@@ -2020,6 +2069,38 @@ unsafe fn create_child(
 }
 
 unsafe fn create_font(height: i32, family: &str) -> HFONT {
+    unsafe { create_font_with_quality(height, family, CLEARTYPE_QUALITY) }
+}
+
+unsafe fn create_icon_font(height: i32) -> HFONT {
+    unsafe {
+        for family in ["Segoe Fluent Icons", "Segoe MDL2 Assets"] {
+            let font = create_font_with_quality(height, family, ANTIALIASED_QUALITY);
+            if font.is_null() || font_face_matches(font, family) {
+                return font;
+            }
+            DeleteObject(font as HGDIOBJ);
+        }
+        create_font_with_quality(height, "Segoe MDL2 Assets", ANTIALIASED_QUALITY)
+    }
+}
+
+unsafe fn font_face_matches(font: HFONT, family: &str) -> bool {
+    unsafe {
+        let dc = CreateCompatibleDC(ptr::null_mut());
+        if dc.is_null() {
+            return true;
+        }
+        let old = SelectObject(dc, font as HGDIOBJ);
+        let mut face = [0u16; 64];
+        let length = GetTextFaceW(dc, face.len() as i32, face.as_mut_ptr());
+        SelectObject(dc, old);
+        DeleteDC(dc);
+        length > 0 && String::from_utf16_lossy(&face[..length as usize - 1]) == family
+    }
+}
+
+unsafe fn create_font_with_quality(height: i32, family: &str, quality: FONT_QUALITY) -> HFONT {
     unsafe {
         CreateFontW(
             -height,
@@ -2033,7 +2114,7 @@ unsafe fn create_font(height: i32, family: &str) -> HFONT {
             DEFAULT_CHARSET.into(),
             OUT_DEFAULT_PRECIS.into(),
             CLIP_DEFAULT_PRECIS.into(),
-            CLEARTYPE_QUALITY.into(),
+            quality.into(),
             (DEFAULT_PITCH | FF_DONTCARE).into(),
             wide(family).as_ptr(),
         )
